@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.12...3.18)
+
+project(graphAlgorithmsCPP LANGUAGES CXX)
+
+set(SOURCE_EXE main.cpp)
+
+add_library(graphAlgoLibCPP STATIC
+	src/mmio.cpp src/graphio_cpp.cpp
+	include/mmio.h include/my_sparse.h
+	include/spmv.h src/spmv.cpp)
+	
+target_include_directories(graphAlgoLibCPP PUBLIC include)
+
+add_executable(graphAlgoExecCPP ${SOURCE_EXE})
+
+target_link_libraries(graphAlgoExecCPP PUBLIC graphAlgoLibCPP)

@@ -1,0 +1,4 @@
+Finished reading
+MCA  time: 1650 ms
+Heap time: 7444 ms
+Maximal absolute error: 9.09495e-13
