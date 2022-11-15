@@ -64,13 +64,13 @@ crsGraphT<double> mkl_mspmm(const crsGraphT<double> &A, const crsGraphT<double> 
 
 int* triangle_counting(const crsGraphT<int> &gr) {
     int *nums_of_tr = new int [gr.v];
-    crsGraphT<int> square; // квадрат матрицы смежности
+    crsGraphT<int> square; // РєРІР°РґСЂР°С‚ РјР°С‚СЂРёС†С‹ СЃРјРµР¶РЅРѕСЃС‚Рё
     crsGraphT<int> mask;
     full_mask(mask, gr.v);
 
     mspgemm_mca(gr, gr, mask, square);
     
-    // подсчёт для каждой вершины числа треугольников, в которые она входит
+    // РїРѕРґСЃС‡С‘С‚ РґР»СЏ РєР°Р¶РґРѕР№ РІРµСЂС€РёРЅС‹ С‡РёСЃР»Р° С‚СЂРµСѓРіРѕР»СЊРЅРёРєРѕРІ, РІ РєРѕС‚РѕСЂС‹Рµ РѕРЅР° РІС…РѕРґРёС‚
     for (int i = 0; i < gr.v; ++i) {
         int num_of_tr = 0;
         int gr_curr_pos = gr.Xdj[i];
