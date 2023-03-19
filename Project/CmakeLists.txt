@@ -2,12 +2,12 @@ cmake_minimum_required(VERSION 3.12...3.18)
 
 project(graphAlgorithmsCPP LANGUAGES CXX)
 
-set(SOURCE_EXE main.cpp)
+set(SOURCE_EXE src/main.cpp)
+#set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address")
 
 add_library(graphAlgoLibCPP STATIC
-	src/mmio.cpp src/graphio_cpp.cpp
-	include/mmio.h include/my_sparse.h
-	include/spmv.h src/spmv.cpp)
+	src/mmio.cpp include/spMatrix.h
+	include/mmio.h include/my_sparse.h)
 	
 target_include_directories(graphAlgoLibCPP PUBLIC include)
 
