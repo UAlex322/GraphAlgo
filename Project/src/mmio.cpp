@@ -199,7 +199,7 @@ int mm_read_mtx_crd_size(FILE *f, int *M, int *N, int *nz )
     {
         if (fgets(line,MM_MAX_LINE_LENGTH,f) == NULL) 
             return MM_PREMATURE_EOF;
-    }while (line[0] == '%');
+    } while (line[0] == '%');
 
     /* line[] is either blank or has M,N, nz */
     if (sscanf(line, "%d %d %d", M, N, nz) == 3)
@@ -455,12 +455,12 @@ char *mm_strdup(const char *s)
 char  *mm_typecode_to_str(MM_typecode matcode)
 {
     char buffer[MM_MAX_LINE_LENGTH];
-    char *types[4];
+    const char *types[4];
 	char *mm_strdup(const char *);
     int error =0;
 
     /* check for MTX type */
-    if (mm_is_matrix(matcode)) 
+    if (mm_is_matrix(matcode))
         types[0] = MM_MTX_STR;
     else
         error=1;
@@ -506,6 +506,8 @@ char  *mm_typecode_to_str(MM_typecode matcode)
         return NULL;
 
     sprintf(buffer,"%s %s %s %s", types[0], types[1], types[2], types[3]);
+    if (error)
+        return NULL;
     return mm_strdup(buffer);
 
 }

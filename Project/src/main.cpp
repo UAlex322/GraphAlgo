@@ -1,28 +1,28 @@
-#define PARALLEL
-
-#include "spMatrix.h"
-#include "my_sparse.h"
+#include "matrix.h"
 #include <omp.h>
 #include <cmath>
 #include <ctime>
 #include <functional>
+#include "bin_reader.h"
 using namespace std;
 
-template <typename T>
-using mxmOp = spMatrix<T>(*)(const spMatrix<T>&, const spMatrix<T>&, const spMatrix<T>&);
+string globalGraphName;
 
-int* triangle_counting_vertex(const spMatrix<int> &A, mxmOp<int> matrixMult) {
+template <typename T>
+using mxmOp = void(*)(bool, const spMtx<T>&, const spMtx<T>&, const spMtx<T>&, spMtx<T>&);
+
+int* triangle_counting_vertex(const spMtx<int> &A, mxmOp<int> matrixMult, bool isParallel) {
     /* PREPARE DATA */
-    int *nums_of_tr = new int[A.v];
+    int *nums_of_tr = new int[A.m];
     int num_of_tr;
-    spMatrix<int> SQ; // A^2 (A is adjacency matrix)
+    spMtx<int> SQ; // A^2 (A is adjacency matrix)
 
     auto start = chrono::steady_clock::now();
 
     /* TRIANGLE COUNTING ITSELF */
-    SQ = matrixMult(A, A, A);
+    matrixMult(isParallel, A, A, A, SQ);
     // for each vertex we count the number of triangles it belongs to
-    for (int i = 0; i < A.v; ++i) {
+    for (size_t i = 0; i < A.m; ++i) {
         num_of_tr = 0;
         for (int j = SQ.Rst[i]; j < SQ.Rst[i+1]; ++j)
             num_of_tr += SQ.Val[j];
@@ -31,78 +31,72 @@ int* triangle_counting_vertex(const spMatrix<int> &A, mxmOp<int> matrixMult) {
     /* TRIANGLE COUNTING ITSELF */
 
     auto finish = chrono::steady_clock::now();
-    cout << "Vertices: " << A.v << '\n';
-    cout << "Edges: " << A.nz << '\n';
+    cout << "Graph: " << globalGraphName << '\n';
     cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << '\n';
 
     return nums_of_tr;
 }
 
-// mspgemm_naive
-// mspgemm_naive_parallel
-// mspgemm_mca
-// mspgemm_mca_parallel
-// mspgemm_heap
-// mspgemm_heap_parallel
 
-int64_t triangle_counting_masked_lu(const spMatrix<int> &A, mxmOp<int> matrixMult) {
+int64_t triangle_counting_masked_lu(const spMtx<int> &A, mxmOp<int> matrixMult, bool isParallel) {
     int64_t num_of_tr = 0;
-    spMatrix<int> L = extract_lower_triangle(A);
-    spMatrix<int> U = transpose(L);
-    spMatrix<int> C;
+    spMtx<int> L = extract_lower_triangle(A);
+    spMtx<int> U = transpose(L);
+    spMtx<int> C;
 
     auto start = chrono::steady_clock::now();
 
     /* TRIANGLE COUNTING ITSELF */
-    C = matrixMult(L, U, A);
+    matrixMult(isParallel, L, U, A, C);
 
     // Count the total number of triangles
-    for (int j = 0; j < C.Rst[C.v]; ++j)
-            num_of_tr += C.Val[j];
+    for (int j = 0; j < C.Rst[C.m]; ++j)
+        num_of_tr += C.Val[j];
     num_of_tr >>= 1;
     /* TRIANGLE COUNTING ITSELF */
 
     auto finish = chrono::steady_clock::now();
     cout << "TRIANGLE COUNTING (LU)\n";
-    cout << "Vertices: " << A.v << '\n';
-    cout << "Edges: " << A.nz << '\n';
+    cout << "Graph: " << globalGraphName << '\n';
     cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
     cout << "Number of triangles: " << num_of_tr << '\n';
 
     return num_of_tr;
 }
 
-int64_t triangle_counting_masked_sandia(const spMatrix<int> &A, mxmOp<int> matrixMult) {
+
+int64_t triangle_counting_masked_sandia(const spMtx<int> &A, mxmOp<int> matrixMult, bool isParallel) {
     int64_t num_of_tr = 0;
-    spMatrix<int> L = extract_lower_triangle(A);
-    spMatrix<int> C;
+    spMtx<int> L = extract_lower_triangle(A);
+    spMtx<int> C;
 
     auto start = chrono::steady_clock::now();
 
     /* TRIANGLE COUNTING ITSELF */
-    C = matrixMult(L, L, L);
+    matrixMult(isParallel, L, L, L, C);
 
     // Count the total number of triangles
 #pragma omp parallel for reduction(+:num_of_tr)
-    for (int j = 0; j < C.Rst[C.v]; ++j)
+    for (int j = 0; j < C.Rst[C.m]; ++j)
         num_of_tr += C.Val[j];
     /* TRIANGLE COUNTING ITSELF */
 
     auto finish = chrono::steady_clock::now();
     cout << "TRIANGLE COUNTING (SANDIA)\n";
-    cout << "Vertices: " << A.v << '\n';
-    cout << "Edges: " << A.nz << '\n';
+    cout << "Graph: " << globalGraphName << '\n';
     cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
     cout << "Number of triangles: " << num_of_tr << '\n';
 
     return num_of_tr;
 }
 
+
 /* K-TRUSS */
-spMatrix<int> k_truss(const spMatrix<int> &A, int k, mxmOp<int> matrixMult) {
-    spMatrix<int> C = A;  // a copy of adjacency matrix
-    spMatrix<int> Tmp;
-    int n = A.v;
+spMtx<int> k_truss(const spMtx<int> &A, int k, mxmOp<int> matrixMult, bool isParallel) {
+    spMtx<int> C = A;  // a copy of adjacency matrix
+    spMtx<int> Tmp;
+    int n = A.m;
+    int totalIterationNum = 0;
     int *tmp_Xdj = new int[n+1];
     tmp_Xdj[0] = 0;
 
@@ -110,7 +104,7 @@ spMatrix<int> k_truss(const spMatrix<int> &A, int k, mxmOp<int> matrixMult) {
 
     for (int t = 0; t < n; ++t) {
         // Tmp<C> = C*C
-        Tmp = matrixMult(C, C, C);
+        matrixMult(isParallel, C, C, C, Tmp);
 
         // remove all edges included in less than (k-2) triangles
         // and replace values of remaining entries with 1
@@ -128,18 +122,20 @@ spMatrix<int> k_truss(const spMatrix<int> &A, int k, mxmOp<int> matrixMult) {
         Tmp.nz = Tmp.Rst[n];
 
         // check if the number of edges has changed
-        if (Tmp.nz == C.nz)
+        if (Tmp.nz == C.nz) {
+            totalIterationNum = t;
             break;
+        }
 
         // Assign 'Tmp' to 'C'
-        C = std::move(Tmp);
+        std::swap(C, Tmp);
     }
 
     auto finish = chrono::steady_clock::now();
     cout << "K-TRUSS " << k << '\n';
-    cout << "Vertices: " << A.v << '\n';
-    cout << "Edges: " << A.nz << '\n';
+    cout << "Graph: " << globalGraphName << '\n';
     cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
+    cout << "Number of iterations: " << totalIterationNum << '\n';
 
     if (C.nz < A.nz) {
         int *new_Adj = new int[C.nz];
@@ -156,77 +152,207 @@ spMatrix<int> k_truss(const spMatrix<int> &A, int k, mxmOp<int> matrixMult) {
     return C;
 }
 
-string output_path(const string &graph_name, bool from_vs) {
+
+GraphInfo get_graph_info(const char *argv[]) {
     std::time_t current_time = chrono::system_clock::to_time_t(chrono::system_clock::now());
-    const char *current_date_time = ctime(&current_time);
-    string logfile(from_vs ? "../logs/" : "../../logs/");
-    logfile += current_date_time;
-    logfile.pop_back();
-    replace(logfile.begin(), logfile.end(), ' ', '_');
-    replace(logfile.begin(), logfile.end(), ':', '-');
-    logfile += "_" + graph_name;
-    logfile += ".txt";
-    return logfile;
+    string current_date_time(ctime(&current_time));
+    string graphName;
+    string graphPath(argv[1]);
+    string logfile(argv[2]);
+    string action(argv[3]);
+    string format;
+
+    int slashPos = graphPath.size() - 1;
+    int dotPos   = graphPath.size() - 1;
+
+    while (graphPath[slashPos] != '/')
+        --slashPos;
+    while (graphPath[dotPos] != '.')
+        --dotPos;
+
+    graphName = graphPath.substr(slashPos + 1, dotPos - slashPos - 1);
+    format = graphPath.substr(dotPos + 1, graphPath.size() - dotPos);
+    graphPath = graphPath.substr(0, slashPos + 1);
+    globalGraphName = graphName;
+
+    if (action == "launch") {
+        string benchAlgorithm(argv[4]);
+        string mxmAlgorithm(argv[5]);
+        string parOrSeq(argv[6]);
+
+        logfile += "/" + current_date_time;
+        logfile.pop_back();
+        replace(logfile.begin(), logfile.end(), ' ', '_');
+        replace(logfile.begin(), logfile.end(), ':', '-');
+        logfile += "_" + graphName;
+        logfile += "_" + benchAlgorithm;
+        logfile += "_" + mxmAlgorithm;
+        logfile += "_" + parOrSeq;
+        if (parOrSeq == "par")
+            logfile += "_" + to_string(omp_get_max_threads());
+        logfile += ".txt";
+    }
+
+    GraphInfo info {graphName, graphPath, logfile, format};
+
+    return info;
 }
 
-int main(int argc, const char* argv[]) {
-    // cout << input_path(argv[1]).c_str() << '\n';
-    spMatrix<double> gr((argc > 1) ? argv[1] : "../graphs/EAT_SR.mtx", false);
-    cerr << "finished reading\n";
-    // freopen(output_path((argc > 1) ? argv[1] : "EAT_SR", argc < 2).c_str(), "w", stdout);
-    
-    /*
-    spMatrix<int> AdjMatrix = build_symm_from_lower(extract_lower_triangle(build_adjacency_matrix(gr)));
-    spMatrix<int> L = extract_lower_triangle(AdjMatrix);
-    spMatrix<int> X, Y;
-    
-    mspgemm_mca_parallel(L, L, L, X);
-    mspgemm_heap_parallel(L, L, L, Y);
+template<typename T>
+int launch_test(const spMtx<T> &gr, const char *argv[]) {
+    string benchmarkAlgorithm(argv[4]),
+           multiplicationAlgorithm(argv[5]),
+           parOrSeqString(argv[6]);
+    bool isParallel = (parOrSeqString == "par");
 
-    for (int i = 0; i < X.v; ++i) {
-        for (int j = X.Rst[i]; j < X.Rst[i+1]; ++j) {
-            if (X.Val[j] != Y.Val[j])
-                cerr << '(' << i << ", " << X.Col[j] << "): (" << X.Val[j] << ", " << Y.Val[j] << ")\n";
-        }
+    mxmOp<int> mxm_algorithm;
+    if (multiplicationAlgorithm == "naive")
+        mxm_algorithm = mxmm_naive<int>;
+    if (multiplicationAlgorithm == "msa")
+        mxm_algorithm = mxmm_msa<int>;
+    else if (multiplicationAlgorithm == "mca")
+        mxm_algorithm = mxmm_mca<int>;
+    else if (multiplicationAlgorithm == "heap")
+        mxm_algorithm = mxmm_heap<int>;
+    else {
+        cerr << "incorrect input (5-th argument has to be 'naive', 'msa', 'mca' or 'heap')\n";
+        return -3;
     }
-    */
 
-#ifdef PARALLEL
-    cout << "PARALLEL NAIVE " << omp_get_max_threads() << "\n\n";
-    cerr << "PARALLEL NAIVE " << omp_get_max_threads() << "\n\n";
-#else
-    cout << "SEQUENTIAL NAIVE\n";
-    cerr << "SEQUENTIAL NAIVE\n";
-#endif
+    spMtx<int> MxmResult;
+    spMtx<int> Symm = build_symm_from_lower(extract_lower_triangle(build_adjacency_matrix(gr)));
 
-    /* DEBUG PART */
-    /*
-    spMatrix<int> Col = generate_adjacency_matrix(7,3,6);
-    spMatrix<int> L = extract_lower_triangle(Col);
-    spMatrix<int> C;
-    Col.print_dense();
-    mspgemm_heap(L, L, L, C);
-    C.print_dense();
-    */
-    spMatrix<int> Col = build_symm_from_lower(extract_lower_triangle(build_adjacency_matrix(gr)));
+    if (parOrSeqString == "par") {
+        cout << "PARALLEL " << omp_get_max_threads() << " \n";
+        // cerr << "PARALLEL " << omp_get_max_threads() << " \n\n";
+    } else if (parOrSeqString == "seq") {
+        cout << "SEQUENTIAL \n";
+        // cerr << "SEQUENTIAL \n\n";
+    } else {
+        cerr << "incorrect input (6-th argument has to be 'par', or 'seq')\n";
+        return -2;
+    }
 
-    triangle_counting_masked_sandia(Col, mxmm_mca_par);
-    cout << "\n\n";
-    cerr << "triangle sandia done\n";
+    if (benchmarkAlgorithm == "mxm") {
+        auto start = chrono::steady_clock::now();
+        mxm_algorithm(isParallel, Symm, Symm, Symm, MxmResult);
+        auto finish = chrono::steady_clock::now();
+        cout << "MATRIX SQUARE\n" << "Vertices: " << Symm.m << "\nEdges: " << Symm.nz
+            << "\nTime: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n\n";
+    }
+    else if (benchmarkAlgorithm == "k-truss") {
+        k_truss(Symm, stoi(argv[7]), mxm_algorithm, isParallel);
+    }
+    else if (benchmarkAlgorithm == "triangle")
+        triangle_counting_masked_sandia(Symm, mxm_algorithm, isParallel);
+    else if (benchmarkAlgorithm == "bc") {
+        auto Adj = build_adjacency_matrix(gr);
+        auto start = chrono::steady_clock::now();
+        vector<float> bcVector = betweenness_centrality(isParallel, Adj, 200);
+        // for (int i = 0; i < bcVector.size(); ++i)
+        //     cout << i << " : " << bcVector[i] << '\n';
+        // cout << '\n';
+        auto finish = chrono::steady_clock::now();
+        cout << "BETWEENNESS CENTRALITY\n" << "Time: " << 
+                chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n\n";
+    }
+    else {
+        cerr << "incorrect input (4-th argument has to be 'triangle', 'k-truss', 'mxm')\n";
+        return -4;
+    }
+    return 0;
+}
+
+string get_graph_val_type(const char *filename, const GraphInfo &info) {
+    ifstream istr(filename, (info.format == "bin") ? std::ios::in | std::ios::binary
+                                                   : std::ios::in);
+    string stype;
+    if (info.format == "bin") {
+        char type;
+        istr >> type >> type >> type;
+        if (type == 'R')
+            stype = "real";
+        else if (type == 'I' || type == 'P')
+            stype = "integer";
+    } else if (info.format == "mtx") {
+        string type;
+        istr >> type >> type >> type >> type;
+        if (type == "complex")
+            throw "Can't use complex numbers!";
+        if (type == "real")
+            stype = "real";
+        else
+            stype = "integer";
+    } else if (info.format == "graph")
+        stype = "integer";
+    else if (info.format == "rmat")
+        stype = "integer";
+    else {
+        istr.close();
+        throw "Unknown format";
+    }
+
+    istr.close();
+    return stype;
+}
+
+// argv[1] - граф
+// argv[2] - папка для вывода логов
+// argv[3] - выполняемая операция (tobinary / launch)
+// для 'launch':
+// argv[4] - выполняемый алгоритм (triangle / k-truss / mxm / bc)
+// argv[5] - используемый алгоритм умножения (naive / msa / mca / heap)
+// argv[6] - последовательно или параллельно (seq / par)
+// argv[7] - параметр 'k' в k-truss
+int main(int argc, const char* argv[]) {
+    if (argc < 4) {
+        cerr << "not enough arguments (have to be at least 3)\n";
+        return -1;
+    }
+
+    string action(argv[3]);
     
-    triangle_counting_masked_lu(Col, mxmm_mca_par);
-    cout << "\n\n";
-    cerr << "triangle lu done\n";
-    /*
-    k_truss(AdjMatrix, 3);
-    cout << "\n\n";
-    cerr << "k-truss " << 3 << " done\n";
+    GraphInfo info = get_graph_info(argv);
+    string grType = get_graph_val_type(argv[1], info);
 
-    k_truss(AdjMatrix, 5);
-    cout << "\n\n";
-    cerr << "k-truss " << 5 << " done\n";
-    */
-    
-    cerr << "finished program\n";
+    if (grType == "integer") {
+        spMtx<int> gr(argv[1], info.format.c_str());
+        // TEST BIN READER
+        int m, n, nz;
+        read_bin_to_crs<int>(argv[1], &m, &n, &nz, gr.matcode, gr.Rst, gr.Col, gr.Val);
+        // TEST BIN READER
+        cerr << "finished reading\n";
+        if (action == "tobinary") {
+            gr.write_crs_to_bin((info.graphPath + info.graphName + ".bin").c_str());
+            cerr << "finished writing to BIN\n";
+        } else if (action == "launch") {
+           return launch_test(gr, argv);
+        } else {
+            cerr << "incorrect input (2-nd argument has to be 'tobinary' or 'launch')\n";
+            return -5;
+        }
+    } else if (grType == "real") {
+        spMtx<double> gr(argv[1], info.format.c_str());
+        // TEST BIN READER
+        int m, n, nz;
+        read_bin_to_crs<double>(argv[1], &m, &n, &nz, gr.matcode, gr.Rst, gr.Col, gr.Val);
+        write_crs_to_bin<double>("graphs/testgr.bin",
+                                 &m, &n, &nz, gr.matcode, gr.Rst, gr.Col, gr.Val);
+        // TEST BIN READER
+        cerr << "finished reading\n";
+        if (action == "tobinary") {
+            gr.write_crs_to_bin((info.graphPath + info.graphName + ".bin").c_str());
+            cerr << "finished writing to BIN\n";
+        } else if (action == "launch") {
+            return launch_test(gr, argv);
+        } else {
+            cerr << "incorrect input (2-nd argument has to be 'tobinary' or 'launch')\n";
+            return -5;
+        }
+    } else {
+        cerr << "unknown value type\n";
+        return -5;
+    }
+
     return 0;
 }
