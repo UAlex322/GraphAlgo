@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.12...3.18)
+
+project(graphAlgorithms LANGUAGES CXX)
+
+if(UNIX)
+    set(CMAKE_CXX_FLAGS "-O3 -g -std=c++17 -fopenmp")
+endif()
+
+set(SOURCE_EXE src/main.cpp)
+add_library(grAlgoLib STATIC
+            include/matrix.h
+            include/matrix_la.h
+            include/matrix_utils.h
+            include/betweenness_centrality.h
+            include/mmio.h
+            src/mmio.cpp)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-g)
+    link_libraries(-g)
+endif()
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O3)
+    link_libraries(-O3)
+endif()
+
+target_include_directories(grAlgoLib PUBLIC include)
+
+add_executable(grAlgo ${SOURCE_EXE})
+
+target_link_libraries(grAlgo PUBLIC grAlgoLib)
