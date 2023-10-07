@@ -19,7 +19,7 @@ std::vector<float> betweenness_centrality(bool isParallel, const spMtx<int> &A, 
     denseMtx<float> Bcu;
     denseMtx<float> Nspinv;
     denseMtx<float> W;
-    denseMtx<float> Wtmp;
+    denseMtx<float> Wbuf;
 
     std::chrono::high_resolution_clock::time_point 
         eWiseAdd_begin,
@@ -41,8 +41,8 @@ std::vector<float> betweenness_centrality(bool isParallel, const spMtx<int> &A, 
     for (size_t i = 0; i < A.n; i += blockSize) {
         size_t n = std::min(A.n - i, blockSize); // количество столбцов
         size_t mxn = (size_t)m * n;
-
         Numsp.resizeVals(n);
+        Wbuf.resize(A.m, n);
         Numsp.n = n;
         for (size_t j = 0; j < i; ++j)
             Numsp.Rst[j] = 0;
@@ -74,7 +74,6 @@ std::vector<float> betweenness_centrality(bool isParallel, const spMtx<int> &A, 
             ++d;
         } while (Front.nz != 0);
 
-
         // Обратный проход
         Numspd = Numsp; // преобразование разреженной матрицы в плотную
         Nspinv.resize(m, n);
@@ -84,7 +83,6 @@ std::vector<float> betweenness_centrality(bool isParallel, const spMtx<int> &A, 
             Bcu.Val[i] = 1.0f;
         for (size_t i = 0; i < mxn; ++i)
             Nspinv.Val[i] = 1.0f / Numspd.Val[i];
-
         for (size_t k = d-1; k > 0; --k) {
             eWiseMult_begin = std::chrono::high_resolution_clock::now();
             eWiseMult(Nspinv, Bcu, Sigmas[k], W);
@@ -92,7 +90,7 @@ std::vector<float> betweenness_centrality(bool isParallel, const spMtx<int> &A, 
             eWiseMult_time += (eWiseAdd_end - eWiseAdd_begin).count();
 
             dMul_begin = std::chrono::high_resolution_clock::now();
-            mxmm_spd(Af, W, Sigmas[k-1], W);
+            mxmm_spd(Af, W, Sigmas[k-1], W, Wbuf);
             dMul_end = std::chrono::high_resolution_clock::now();
             dMul_time += (dMul_end - dMul_begin).count();
 
@@ -141,7 +139,7 @@ std::vector<float> betweenness_centrality_batch(bool isParallel, const spMtx<int
     denseMtx<float> Bcu;
     denseMtx<float> Nspinv;
     denseMtx<float> W;
-    denseMtx<float> Wtmp;
+    denseMtx<float> Wbuf;
 
     std::chrono::high_resolution_clock::time_point 
         eWiseAdd_begin,
@@ -162,7 +160,7 @@ std::vector<float> betweenness_centrality_batch(bool isParallel, const spMtx<int
 
     size_t n = std::min(A.n, batchSize); // количество столбцов
     size_t mxn = (size_t)m * n;
-
+    Wbuf.resize(A.m, n);
     Numsp.resizeVals(n);
     Numsp.n = n;
     for (size_t j = 0; j < n; ++j) {
@@ -193,7 +191,6 @@ std::vector<float> betweenness_centrality_batch(bool isParallel, const spMtx<int
         ++d;
     } while (Front.nz != 0);
 
-
     // Обратный проход
     Numspd = Numsp; // преобразование разреженной матрицы в плотную
     Nspinv.resize(m, n);
@@ -203,7 +200,6 @@ std::vector<float> betweenness_centrality_batch(bool isParallel, const spMtx<int
         Bcu.Val[i] = 1.0f;
     for (size_t i = 0; i < mxn; ++i)
         Nspinv.Val[i] = 1.0f / Numspd.Val[i];
-
     for (size_t k = d-1; k > 0; --k) {
         eWiseMult_begin = std::chrono::high_resolution_clock::now();
         eWiseMult(Nspinv, Bcu, Sigmas[k], W);
@@ -211,7 +207,7 @@ std::vector<float> betweenness_centrality_batch(bool isParallel, const spMtx<int
         eWiseMult_time += (eWiseAdd_end - eWiseAdd_begin).count();
 
         dMul_begin = std::chrono::high_resolution_clock::now();
-        mxmm_spd(Af, W, Sigmas[k-1], W);
+        mxmm_spd(Af, W, Sigmas[k-1], W, Wbuf);
         dMul_end = std::chrono::high_resolution_clock::now();
         dMul_time += (dMul_end - dMul_begin).count();
 

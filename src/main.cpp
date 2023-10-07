@@ -8,8 +8,6 @@
 #include "bin_reader.h"
 using namespace std;
 
-string globalGraphName;
-
 template <typename T>
 using mxmOp = void(*)(bool, const spMtx<T>&, const spMtx<T>&, const spMtx<T>&, spMtx<T>&);
 
@@ -33,8 +31,7 @@ int* triangle_counting_vertex(const spMtx<int> &A, mxmOp<int> matrixMult, bool i
     /* TRIANGLE COUNTING ITSELF */
 
     auto finish = chrono::steady_clock::now();
-    cout << "Graph: " << globalGraphName << '\n';
-    cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << '\n';
+    cout << "Time:       " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << '\n';
 
     return nums_of_tr;
 }
@@ -58,10 +55,8 @@ int64_t triangle_counting_masked_lu(const spMtx<int> &A, mxmOp<int> matrixMult, 
     /* TRIANGLE COUNTING ITSELF */
 
     auto finish = chrono::steady_clock::now();
-    cout << "TRIANGLE COUNTING (LU)\n";
-    cout << "Graph: " << globalGraphName << '\n';
-    cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
-    cout << "Number of triangles: " << num_of_tr << '\n';
+    cout << "Time:       " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
+    cout << "Triangles:  " << num_of_tr << '\n';
 
     return num_of_tr;
 }
@@ -71,9 +66,6 @@ int64_t triangle_counting_masked_sandia(const spMtx<int> &A, mxmOp<int> matrixMu
     int64_t num_of_tr = 0;
     spMtx<int> L = extract_lower_triangle(A);
     spMtx<int> C;
-
-    cout << A.nz << '\n';
-    cout << L.nz << '\n';
 
     auto start = chrono::steady_clock::now();
 
@@ -87,10 +79,8 @@ int64_t triangle_counting_masked_sandia(const spMtx<int> &A, mxmOp<int> matrixMu
     /* TRIANGLE COUNTING ITSELF */
 
     auto finish = chrono::steady_clock::now();
-    cout << "TRIANGLE COUNTING (SANDIA)\n";
-    cout << "Graph: " << globalGraphName << '\n';
-    cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
-    cout << "Number of triangles: " << num_of_tr << '\n';
+    cout << "Time:       " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
+    cout << "Triangles:  " << num_of_tr << '\n';
 
     return num_of_tr;
 }
@@ -137,10 +127,8 @@ spMtx<int> k_truss(const spMtx<int> &A, int k, mxmOp<int> matrixMult, bool isPar
     }
 
     auto finish = chrono::steady_clock::now();
-    cout << "K-TRUSS " << k << '\n';
-    cout << "Graph: " << globalGraphName << '\n';
-    cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
-    cout << "Number of iterations: " << totalIterationNum << '\n';
+    cout << "Time:       " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n";
+    cout << "Iterations: " << totalIterationNum << '\n';
 
     if (C.nz < A.nz) {
         int *new_Adj = new int[C.nz];
@@ -178,7 +166,6 @@ GraphInfo get_graph_info(int argc, const char *argv[]) {
     graphName = graphPath.substr(slashPos + 1, dotPos - slashPos - 1);
     format = graphPath.substr(dotPos + 1, graphPath.size() - dotPos);
     graphPath = graphPath.substr(0, slashPos + 1);
-    globalGraphName = graphName;
 
     if (action == "launch") {
         current_date_time.pop_back();
@@ -198,19 +185,21 @@ GraphInfo get_graph_info(int argc, const char *argv[]) {
     return info;
 }
 
-template<typename T>
-int launch_test(const spMtx<T> &gr, const char *argv[]) {
+int launch_test(const spMtx<int> &gr, const GraphInfo &info, int argc, const char *argv[]) {
     string benchmarkAlgorithm(argv[4]),
            parOrSeq(argv[5]),
            batchSizeStr;
     bool isParallel = (parOrSeq == "par");
-    mxmOp<int> mxm_algorithm;
     size_t batch_size;
+    mxmOp<int> mxm_algorithm;
+    spMtx<int> MxmResult, TestMtx = gr;
+    chrono::high_resolution_clock::time_point start, finish, default_time;
+    stringstream alg_ss;
 
     if (benchmarkAlgorithm == "bc") {
-        batch_size = atoll(argv[6]);
-        if (batch_size == 0) {
-            cerr << "incorrect input, 6-th argument: has to be positive integer\n";
+        if (argc < 7 || (batch_size = atoll(argv[6])) == 0) {
+            cerr << "incorrect input, 6-th argument: batch has to be positive integer\n";
+            return -6;
         }
     }
     else {
@@ -225,54 +214,65 @@ int launch_test(const spMtx<T> &gr, const char *argv[]) {
             mxm_algorithm = mxmm_heap<int>;
         else {
             cerr << "incorrect input, 6-th argument: has to be 'naive', 'msa', 'mca' or 'heap')\n";
-            return -3;
+            return -7;
         }
     }
 
-    spMtx<int> MxmResult, Symm;
     if (benchmarkAlgorithm != "bc")
-        Symm = build_symm_from_lower(extract_lower_triangle(build_adjacency_matrix(gr)));
+        TestMtx = build_symm_from_lower(extract_lower_triangle(TestMtx));
 
     if (parOrSeq == "par") {
-        cout << "PARALLEL " << omp_get_max_threads() << " THREADS\n";
+        alg_ss << "Parallel,   " << omp_get_max_threads() << " threads\n";
         // cerr << "PARALLEL " << omp_get_max_threads() << " THREADS\n";
     } else if (parOrSeq == "seq") {
-        cout << "SEQUENTIAL\n";
+        alg_ss << "Sequential\n";
         // cerr << "SEQUENTIAL \n\n";
     } else {
-        cerr << "incorrect input, 5-th argument: has to be 'par' or 'seq')\n";
-        return -2;
+        cerr << "incorrect input, 5-th argument: has to be 'par' or 'seq'\n";
+        return -5;
     }
 
     if (benchmarkAlgorithm == "mxm") {
-        auto start = chrono::steady_clock::now();
-        mxm_algorithm(isParallel, Symm, Symm, Symm, MxmResult);
-        auto finish = chrono::steady_clock::now();
-        cout << "MATRIX SQUARE\n" << "Vertices: " << Symm.m << "\nEdges: " << Symm.nz
-            << "\nTime: " << chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n\n";
+        start = chrono::high_resolution_clock::now();
+        mxm_algorithm(isParallel, TestMtx, TestMtx, TestMtx, MxmResult);
+        finish = chrono::high_resolution_clock::now();
+        alg_ss << "Algorithm:  matrix square\n";
     }
     else if (benchmarkAlgorithm == "k-truss") {
-        k_truss(Symm, stoi(argv[7]), mxm_algorithm, isParallel);
+        if (argc < 8 || atoi(argv[7]) < 3) {
+            cerr << "incorrect input, 7-th argument: has to be positive integer bigger than 2\n";
+        }
+        alg_ss << "Algorithm:  k-truss, k = " << argv[7] << '\n';
+        k_truss(TestMtx, stoi(argv[7]), mxm_algorithm, isParallel);
     }
-    else if (benchmarkAlgorithm == "triangle")
-        triangle_counting_masked_sandia(Symm, mxm_algorithm, isParallel);
+    else if (benchmarkAlgorithm == "triangle") {
+        alg_ss << "Algorithm:  triangle counting\n";
+        triangle_counting_masked_sandia(TestMtx, mxm_algorithm, isParallel);
+    }
     else if (benchmarkAlgorithm == "bc") {
-        auto Adj = build_adjacency_matrix(gr);
-        auto start = chrono::steady_clock::now();
+        vector<float> bcVector;
+        start = chrono::high_resolution_clock::now();
         // size_t cache_fit_size = 1747626; // to size of float matrix to fit into 20 Mb cache 
         // size_t batch_size = (cache_fit_size/Adj.m > 0) ? cache_fit_size/Adj.m : 3;
-        vector<float> bcVector = betweenness_centrality_batch(isParallel, Adj, batch_size);
+        bcVector = betweenness_centrality_batch(isParallel, TestMtx, batch_size);
+        // vector<float> bcVector = betweenness_centrality(isParallel, TestMtx, 5);
         // for (int i = 0; i < bcVector.size(); ++i)
         //     cout << i << " : " << bcVector[i] << '\n';
         // cout << '\n';
-        auto finish = chrono::steady_clock::now();
-        cout << "BETWEENNESS CENTRALITY" << "\nBatch size: " << batch_size << "\nTime: " << 
-                chrono::duration_cast<chrono::milliseconds>(finish - start).count() << " ms\n\n";
+        finish = chrono::high_resolution_clock::now();
+        alg_ss << "Algorithm:  betweenness centrality\n" << "Batch size: " << batch_size << '\n';
     }
     else {
         cerr << "incorrect input, 4-th argument: has to be 'triangle', 'k-truss', 'mxm' or 'bc')\n";
         return -4;
     }
+    long long time = chrono::duration_cast<chrono::milliseconds>(finish - start).count();
+    if (start != default_time)
+        cout << "Time:       " << time << " ms\n";
+    cout << "Graph name: " << info.graphName << '\n';
+    cout << "Vertices:   " << TestMtx.m << '\n';
+    cout << "Edges:      " << TestMtx.nz << '\n';
+    cout << alg_ss.str() << '\n';
     return 0;
 }
 
@@ -321,44 +321,40 @@ string get_graph_val_type(const char *filename, const GraphInfo &info) {
 //     argv[6] - используемый алгоритм умножения (naive / msa / mca / heap)
 //     для k-truss:
 //       argv[7] - параметр 'k' в k-truss
+
+template <typename ValType>
+int read_graph_and_launch_test(const GraphInfo &info, int argc, const char *argv[]) {
+    string action(argv[3]);
+    spMtx<ValType> gr(argv[1], info.format.c_str());
+    cerr << "finished reading\n";
+    if (action == "tobinary") {
+        gr.write_crs_to_bin((info.graphPath + info.graphName + ".bin").c_str());
+        cerr << "finished writing to BIN\n";
+        return 0;
+    } else if (action == "launch") {
+       return launch_test(build_adjacency_matrix(gr), info, argc, argv);
+    } else {
+        cerr << "incorrect input (3-nd argument has to be 'tobinary' or 'launch')\n";
+        return -3;
+    }
+}
+
 int main(int argc, const char* argv[]) {
     if (argc < 4) {
         cerr << "not enough arguments (have to be at least 3)\n";
         return -1;
     }
 
-    string action(argv[3]);
-    
     GraphInfo info = get_graph_info(argc, argv);
     string grType = get_graph_val_type(argv[1], info);
 
-    if (grType == "integer") {
-        spMtx<int> gr(argv[1], info.format.c_str());
-        cerr << "finished reading\n";
-        if (action == "tobinary") {
-            gr.write_crs_to_bin((info.graphPath + info.graphName + ".bin").c_str());
-            cerr << "finished writing to BIN\n";
-        } else if (action == "launch") {
-           return launch_test(gr, argv);
-        } else {
-            cerr << "incorrect input (2-nd argument has to be 'tobinary' or 'launch')\n";
-            return -5;
-        }
-    } else if (grType == "real") {
-        spMtx<double> gr(argv[1], info.format.c_str());
-        cerr << "finished reading\n";
-        if (action == "tobinary") {
-            gr.write_crs_to_bin((info.graphPath + info.graphName + ".bin").c_str());
-            cerr << "finished writing to BIN\n";
-        } else if (action == "launch") {
-            return launch_test(gr, argv);
-        } else {
-            cerr << "incorrect input (2-nd argument has to be 'tobinary' or 'launch')\n";
-            return -5;
-        }
+    if (grType == "integer")
+        return read_graph_and_launch_test<int>(info, argc, argv);
+    else if (grType == "real") {
+        return read_graph_and_launch_test<double>(info, argc, argv);
     } else {
         cerr << "unknown value type\n";
-        return -5;
+        return -2;
     }
 
     return 0;

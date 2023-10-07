@@ -3,6 +3,7 @@
 #include "matrix.h"
 #include <queue>
 #include <vector>
+#include <utility>
 
 // declarations
 
@@ -190,8 +191,8 @@ spMtx<T> transpose(const spMtx<T> &A) {
 
 // C += A .* B
 template <typename T>
-void fuseEWiseMultAdd(const denseMtx<T> &A, const denseMtx<T> &B, const denseMtx<T> &C) {
-#pragma omp parallel for schedule(static, 4096)
+void fuseEWiseMultAdd(const denseMtx<T> &A, const denseMtx<T> &B, denseMtx<T> &C) {
+#pragma omp parallel for simd schedule(static, 4096)
     for (size_t i = 0; i < A.m * A.n; ++i)
         C.Val[i] += A.Val[i] * B.Val[i];
 }
@@ -199,7 +200,15 @@ void fuseEWiseMultAdd(const denseMtx<T> &A, const denseMtx<T> &B, const denseMtx
 // C<M> = A .* B
 template <typename T, typename U>
 void eWiseMult(const denseMtx<T> &A, const denseMtx<T> &B, const spMtx<U> &M, const denseMtx<T> &C) {
-    memset(C.Val, 0, C.m * C.n * sizeof(T));
+    const T zero = T(0);
+#pragma omp parallel for simd schedule(static, 64)
+    for (size_t i = 0; i < C.m; ++i) {
+        T *c_row = C.Val + i * C.n;
+        for (size_t j = 0; j < C.n; ++j) {
+            *c_row = zero;
+            ++c_row;
+        }
+    }
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < M.m; ++i) {
         for (size_t j = M.Rst[i]; j < M.Rst[i+1]; ++j) {
@@ -230,25 +239,34 @@ denseMtx<T> transpose(const denseMtx<T> &A) {
 // C<M> = A * B
 // TODO ^T !!!!!!!!!!!!!!!!
 template <typename T, typename U>
-void mxmm_spd(const spMtx<T> &A, const denseMtx<T> &B, const spMtx<U> &M, denseMtx<T> &C) {
-    denseMtx<T> Ccopy(C.m, C.n);
-    denseMtx<T> BT = transpose(B);
-    T zero = (T)0;
+void mxmm_spd(const spMtx<T> &A, const denseMtx<T> &B, const spMtx<U> &M, denseMtx<T> &C, denseMtx<T> &Cbuf) {
+    const T zero = T(0);
+    // denseMtx<T> BT = transpose(B);
 
-#pragma omp parallel for schedule(dynamic, 256)
+#pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < M.m; ++i) {
-        for (size_t q = M.Rst[i]; q < M.Rst[i+1]; ++q) {
-            size_t j = M.Col[q];
-            T *b_row = BT.Val + BT.n * j;
-            T dotpr = zero;
-        //#pragma omp simd
-            for (size_t k = A.Rst[i]; k < A.Rst[i+1]; ++k) {
-                dotpr += A.Val[k] * b_row[A.Col[k]];
-            }
-            Ccopy.Val[C.n * i + j] = dotpr;
+        // for (size_t q = M.Rst[i]; q < M.Rst[i+1]; ++q) {
+        //     size_t j = M.Col[q];
+        //     T *b_row = BT.Val + BT.n * j;
+        //     T dotpr = zero;
+        //     for (size_t k = A.Rst[i]; k < A.Rst[i+1]; ++k) {
+        //         dotpr += A.Val[k] * b_row[A.Col[k]];
+        //     }
+        //     Ccopy.Val[C.n * i + j] = dotpr;
+        // }
+        T *c_row = Cbuf.Val + Cbuf.n * i;
+        for (size_t i = 0; i < C.n; ++i)
+            c_row[i] = zero;
+        for (size_t q = A.Rst[i]; q < A.Rst[i+1]; ++q) {
+            size_t j = A.Col[q];
+            T  a_val = A.Val[q];
+            T *b_row = B.Val + B.n * j;
+        #pragma omp simd
+            for (size_t k = M.Rst[i]; k < M.Rst[i+1]; ++k)
+                c_row[M.Col[k]] += a_val * b_row[M.Col[k]];
         }
     }
-    C = std::move(Ccopy);
+    std::swap(C.Val, Cbuf.Val);
 }
 
 template <typename T, typename U>
@@ -326,7 +344,7 @@ spMtx<T> add_nointersect(const spMtx<T> &A, const spMtx<T> &B) {
         C.Rst[i] = A.Rst[i] + B.Rst[i];
     C.resizeVals(C.Rst[C.m]);
 
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < A.m; ++i) {
         int aIdx = A.Rst[i], bIdx = B.Rst[i], cIdx;
         for (cIdx = C.Rst[i]; aIdx < A.Rst[i+1] && bIdx < B.Rst[i+1]; ++cIdx) {
@@ -787,7 +805,7 @@ void _mxmm_msa_cmask_parallel(const spMtx<T> &A, const spMtx<T> &B, const spMtx<
         std::vector<int> changed_states;
         changed_states.reserve(B.n);
         
-#pragma omp for schedule(dynamic, 256)
+#pragma omp for schedule(dynamic, 64)
         for (size_t i = 0; i < A.m; ++i) {
             int m_begin = M.Rst[i];
             int m_end   = M.Rst[i+1];
